@@ -5,6 +5,8 @@ PROGS    = $(basename $(wildcard *.c))
 
 all: $(PROGS)
 
+client: LDLIBS += -pthread
+
 %: %.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) $< $(LDLIBS) -o $@
 
