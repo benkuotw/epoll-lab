@@ -53,7 +53,7 @@ void handle_client(int client_fd)
 			break;
 
 		buf[numRead] = '\0';
-		printf("[%d]Received from %s:%d: %s", pid, client_ip, client_port, buf);
+		printf("[%d]Received from %s:%d: %s\n", pid, client_ip, client_port, buf);
 
 		if (write(client_fd, buf, numRead) != numRead) {
 			perror("write");
