@@ -14,31 +14,58 @@
 #define BUF_SIZE 1024
 #define MAX_EVENTS 1000
 
-void handle_client(int client_fd)
-{
-	struct sockaddr_in client_addr;
-	socklen_t client_addr_len;
-	char client_ip[INET_ADDRSTRLEN];
-	int client_port;
-	char buf[BUF_SIZE];
-	ssize_t numRead;
-	pid_t pid;
+// connection info, used in ev.data.ptr
+struct conn {
+	int fd;
+	char ip[INET_ADDRSTRLEN];
+	int port;
+};
 
-	client_addr_len = sizeof(client_addr);
-	if (getpeername(client_fd, (struct sockaddr *)&client_addr, &client_addr_len) == -1) {
-		perror("getpeername");
-		client_ip[0] = '\0';
-		client_port = -1;
-	} else {
-		inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip, INET_ADDRSTRLEN);
-		client_port = ntohs(client_addr.sin_port);
+pid_t pid;
+
+void close_conn(struct conn *c)
+{
+	if (close(c->fd) == -1) {
+		perror("close");
+	}
+	free(c);
+}
+
+// remember the client address once at accept time
+void add_client(int epoll_fd, int client_fd, struct sockaddr_in *client_addr)
+{
+	struct epoll_event ev;
+	struct conn *c;
+
+	c = malloc(sizeof(*c));
+	if (c == NULL) {
+		perror("malloc");
+		close(client_fd);
+		return;
 	}
 
-	pid = getpid();
+	c->fd = client_fd;
+	inet_ntop(AF_INET, &client_addr->sin_addr, c->ip, sizeof(c->ip));
+	c->port = ntohs(client_addr->sin_port);
+
+	// set EPOLLRDHUP for client closes connection or shuts down writing half
+	// set EPOLLET on client connection
+	ev.events = EPOLLIN | EPOLLRDHUP | EPOLLET;
+	ev.data.ptr = c;
+	if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev) == -1) {
+		perror("epoll_ctl: client_fd");
+		close_conn(c);
+	}
+}
+
+void handle_client(struct conn *c)
+{
+	char buf[BUF_SIZE];
+	ssize_t numRead;
 
 	// read until EAGAIN or EWOULDBLOCK
 	for (;;) {
-		numRead = read(client_fd, buf, BUF_SIZE - 1);
+		numRead = read(c->fd, buf, BUF_SIZE - 1);
 		if (numRead == -1) {
 			if (errno == EINTR)
 				continue;
@@ -53,27 +80,26 @@ void handle_client(int client_fd)
 			break;
 
 		buf[numRead] = '\0';
-		printf("[%d]Received from %s:%d: %s\n", pid, client_ip, client_port, buf);
+		printf("[%d]Received from %s:%d: %s\n", pid, c->ip, c->port, buf);
 
-		if (write(client_fd, buf, numRead) != numRead) {
+		if (write(c->fd, buf, numRead) != numRead) {
 			perror("write");
 			break;
 		}
 	}
 
-	if (close(client_fd) == -1) {
-		perror("close");
-	}
+	close_conn(c);
 }
 
 // accept until EAGAIN or EWOULDBLOCK since nonblocking listener, instead of one epoll_wait() per connection
 void accept_clients(int epoll_fd, int server_fd)
 {
-	struct epoll_event ev;
+	struct sockaddr_in client_addr;
+	socklen_t client_addr_len = sizeof(client_addr);
 	int client_fd;
 
 	for (;;) {
-		client_fd = accept4(server_fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+		client_fd = accept4(server_fd, (struct sockaddr *)&client_addr, &client_addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
 		if (client_fd == -1) {
 			if (errno == EAGAIN || errno == EWOULDBLOCK) {
 				break; // backlog drained
@@ -82,15 +108,7 @@ void accept_clients(int epoll_fd, int server_fd)
 				continue;
 			}
 		}
-
-		// set EPOLLRDHUP for client closes connection or shuts down writing half
-		// set EPOLLET on client connection
-		ev.events = EPOLLIN | EPOLLRDHUP | EPOLLET;
-		ev.data.fd = client_fd;
-		if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev) == -1) {
-			perror("epoll_ctl: client_fd");
-			close(client_fd);
-		}
+		add_client(epoll_fd, client_fd, &client_addr);
 	}
 }
 
@@ -107,12 +125,13 @@ void usage(const char *prog)
 
 int main(int argc, char *argv[])
 {
-	pid_t pid;
 	int server_fd, client_fd;
-	struct sockaddr_in server_addr;
+	struct sockaddr_in server_addr, client_addr;
+	socklen_t client_addr_len = sizeof(client_addr);
+	int port = PORT;
 	int epoll_fd, numReady;
 	struct epoll_event ev, evs[MAX_EVENTS];
-	int port = PORT;
+	struct conn server_conn;
 	int et_listener = 0, accept_loop = 0;
 	int opt;
 	char *end;
@@ -188,8 +207,9 @@ int main(int argc, char *argv[])
 	}
 
 	// LT listener by default, man epoll.7
+	server_conn.fd = server_fd;
 	ev.events = EPOLLIN | (et_listener ? EPOLLET : 0);
-	ev.data.fd = server_fd;
+	ev.data.ptr = &server_conn;
 	if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &ev) == -1) {
 		perror("epoll_ctl");
 		exit(EXIT_FAILURE);
@@ -215,33 +235,25 @@ int main(int argc, char *argv[])
 		}
 
 		for (int i = 0; i < numReady; ++i) {
-			if (evs[i].data.fd == server_fd) {
+			struct conn *c = evs[i].data.ptr;
+			if (c == &server_conn) {
 				if (accept_loop == 0) {
 					// one accept per wakeup, man epoll.7
-					client_fd = accept4(server_fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+					client_fd = accept4(server_fd, (struct sockaddr *)&client_addr, &client_addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
 					if (client_fd == -1) {
 						perror("accept4");
 						continue;
 					}
-
-					// set EPOLLRDHUP for client closes connection or shuts down writing half
-					// set EPOLLET on client connection
-					ev.events = EPOLLIN | EPOLLRDHUP | EPOLLET;
-					ev.data.fd = client_fd;
-					if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev) == -1) {
-						perror("epoll_ctl: client_fd");
-						close(client_fd);
-					}
+					add_client(epoll_fd, client_fd, &client_addr);
 				} else {
 					accept_clients(epoll_fd, server_fd);
 				}
 			} else if (evs[i].events & (EPOLLHUP | EPOLLERR)) {
-				if (close(evs[i].data.fd) == -1)
-					perror("close");
+				close_conn(c);
 			} else {
 				// EPOLLIN or EPOLLRDHUP
 				// process I/O until EAGAIN or EWOULDBLOCK
-				handle_client(evs[i].data.fd);
+				handle_client(c);
 			}
 		}
 	}
