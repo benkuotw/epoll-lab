@@ -105,7 +105,7 @@ void accept_clients(int epoll_fd, int server_fd)
 				break; // backlog drained
 			} else {
 				perror("accept4");
-				continue;
+				break; // avoid error loop
 			}
 		}
 		add_client(epoll_fd, client_fd, &client_addr);
