@@ -107,7 +107,7 @@ void usage(const char *prog)
 
 int main(int argc, char *argv[])
 {
-	int pid;
+	pid_t pid;
 	int server_fd, client_fd;
 	struct sockaddr_in server_addr;
 	int epoll_fd, numReady;
