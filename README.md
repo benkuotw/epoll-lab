@@ -34,10 +34,9 @@ them as undeclared, generate a compilation database with `make clean && bear -- 
 I add each rule to the server once I've seen it work and seen it fail:
 
 - [x] non-blocking listener and client sockets
-- [x] read until `EAGAIN`, close on `read()` returning 0, `EPOLLRDHUP`, `EPOLLHUP` or `EPOLLERR`
-- [x] accept until `EAGAIN` (`-a`), and what happens without it (`-e`)
-- [x] return to `epoll_wait()` on `accept4()` errors such as `EMFILE`
-- [ ] write until `EAGAIN`, then wait for `EPOLLOUT`
+- [x] accept until `EAGAIN` (`-a`), then wait for `EPOLLIN`
+- [x] read until `EAGAIN`, then wait for `EPOLLIN`
+- [x] write until `EAGAIN`, then wait for `EPOLLOUT`
 
 ## Usage
 
@@ -89,8 +88,8 @@ The two server flags give four listener modes. Results with `./client -t 1000` a
 | Flags | Listener | Accept | `epoll_wait()` calls | Result |
 |---|---|---|---|---|
 | (none) | LT | one per wakeup | 1002 | all echoed |
-| `-a` | LT | loop until `EAGAIN` | 6 | all echoed |
-| `-e -a` | ET | loop until `EAGAIN` | 9 | all echoed |
+| `-a` | LT | loop until `EAGAIN` | ~10 | all echoed |
+| `-e -a` | ET | loop until `EAGAIN` | ~10 | all echoed |
 | `-e` | ET | one per wakeup | – | **stuck** (with `-t 2000`) |
 
 On arm64, glibc's `epoll_wait()` calls the `epoll_pwait` system call, so `strace` counts it as
@@ -113,7 +112,7 @@ LISTEN 1420   4096         0.0.0.0:10000      0.0.0.0:*
 - With an ET listener, the accept loop is required. While the server is busy, several new
   connections merge into one event, so one `accept4()` leaves the rest queued.
 - With an LT listener, the accept loop is optional, but it reduces `epoll_wait()` calls:
-  1002 without it and 6 with it, for 1000 connections.
+  1002 without it and about 10 with it, for 1000 connections.
 - 10,000 concurrent connections are easy for one thread. Raise the open-file limit first,
   e.g. `ulimit -n 10240`; the default is often 1024.
 
