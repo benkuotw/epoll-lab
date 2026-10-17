@@ -224,11 +224,10 @@ int main(int argc, char *argv[])
 		perror("setsockopt(SO_REUSEADDR)");
 		exit(EXIT_FAILURE);
 	}
-	// if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEPORT, &optval,
-	// 	       sizeof(optval)) == -1) {
-	// 	perror("setsockopt(SO_REUSEPORT)");
-	// 	exit(EXIT_FAILURE);
-	// }
+	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval)) == -1) {
+		perror("setsockopt(SO_REUSEPORT)");
+		exit(EXIT_FAILURE);
+	}
 
 	memset(&server_addr, 0, sizeof(server_addr));
 	server_addr.sin_family = AF_INET;
@@ -253,7 +252,7 @@ int main(int argc, char *argv[])
 
 	// LT listener by default, man epoll.7
 	server_conn.fd = server_fd;
-	ev.events = EPOLLIN | (et_listener ? EPOLLET : 0);
+	ev.events = EPOLLIN | (et_listener ? EPOLLET : 0) | EPOLLEXCLUSIVE;
 	ev.data.ptr = &server_conn;
 	if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &ev) == -1) {
 		perror("epoll_ctl");
