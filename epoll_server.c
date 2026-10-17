@@ -20,6 +20,8 @@ struct conn {
 	int fd;
 	char ip[INET_ADDRSTRLEN];
 	int port;
+	char wbuf[BUF_SIZE];
+	size_t wbuf_len;
 };
 
 pid_t pid;
@@ -32,19 +34,52 @@ void close_conn(struct conn *c)
 	free(c);
 }
 
+// write until all; keep the rest in wbuf if EAGAIN or EWOULDBLOCK
+int write_wbuf(struct conn *c, const char *rbuf, size_t rbuf_len)
+{
+	ssize_t numWrite;
+
+	size_t off = 0;
+	while (off < rbuf_len) {
+		numWrite = write(c->fd, rbuf + off, rbuf_len - off);
+		if (numWrite == -1) {
+			if (errno == EINTR)
+				continue;
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+				memmove(c->wbuf, rbuf + off, rbuf_len - off);
+				c->wbuf_len = rbuf_len - off;
+				return 0;
+			}
+			perror("write");
+			return -1;
+		}
+		off += numWrite;
+	}
+	c->wbuf_len = 0;
+	return 0;
+}
+
 void handle_client(struct conn *c)
 {
-	char buf[BUF_SIZE];
+	char rbuf[BUF_SIZE];
 	ssize_t numRead;
+
+	// EPOLLOUT: finish the earlier write before read more
+	if (c->wbuf_len > 0) {
+		if (write_wbuf(c, c->wbuf, c->wbuf_len) == -1)
+			goto close;
+		if (c->wbuf_len > 0)
+			return; // still full, wait for the next turn
+	}
 
 	// read until EAGAIN or EWOULDBLOCK
 	for (;;) {
-		numRead = read(c->fd, buf, BUF_SIZE - 1);
+		numRead = read(c->fd, rbuf, BUF_SIZE);
 		if (numRead == -1) {
 			if (errno == EINTR)
 				continue;
 			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				return; // keep the connection open
+				return; // read out, wait for the next turn
 
 			perror("read");
 			break;
@@ -53,15 +88,15 @@ void handle_client(struct conn *c)
 		if (numRead == 0) // client closes the connection
 			break;
 
-		buf[numRead] = '\0';
-		printf("[%d]Received from %s:%d: %s\n", pid, c->ip, c->port, buf);
+		printf("[%d]Received from %s:%d: %.*s\n", pid, c->ip, c->port, (int)numRead, rbuf);
 
-		if (write(c->fd, buf, numRead) != numRead) {
-			perror("write");
+		if (write_wbuf(c, rbuf, numRead) == -1)
 			break;
-		}
+		if (c->wbuf_len > 0)
+			return; // still full, wait for the next turn
 	}
 
+close:
 	close_conn(c);
 }
 
@@ -86,10 +121,11 @@ void add_client(int epoll_fd, int client_fd, struct sockaddr_in *client_addr)
 	c->fd = client_fd;
 	inet_ntop(AF_INET, &client_addr->sin_addr, c->ip, sizeof(c->ip));
 	c->port = ntohs(client_addr->sin_port);
+	c->wbuf_len = 0;
 
 	// set EPOLLRDHUP for client closes connection or shuts down writing half
 	// set EPOLLET on client connection
-	ev.events = EPOLLIN | EPOLLRDHUP | EPOLLET;
+	ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLET;
 	ev.data.ptr = c;
 	if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev) == -1) {
 		perror("epoll_ctl: client_fd");
@@ -97,7 +133,7 @@ void add_client(int epoll_fd, int client_fd, struct sockaddr_in *client_addr)
 	}
 }
 
-// accept until EAGAIN or EWOULDBLOCK since nonblocking listener, instead of one epoll_wait() per connection
+// accept until EAGAIN or EWOULDBLOCK
 void accept_clients(int epoll_fd, int server_fd)
 {
 	struct sockaddr_in client_addr;
@@ -258,10 +294,8 @@ int main(int argc, char *argv[])
 				} else {
 					accept_clients(epoll_fd, server_fd);
 				}
-			} else if (evs[i].events & (EPOLLHUP | EPOLLERR)) {
-				close_conn(c);
 			} else {
-				// EPOLLIN or EPOLLRDHUP
+				// EPOLLIN, EPOLLOUT or EPOLLRDHUP
 				// process I/O until EAGAIN or EWOULDBLOCK
 				handle_client(c);
 			}
