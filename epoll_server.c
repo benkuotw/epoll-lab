@@ -252,7 +252,7 @@ int main(int argc, char *argv[])
 
 	// LT listener by default, man epoll.7
 	server_conn.fd = server_fd;
-	ev.events = EPOLLIN | (et_listener ? EPOLLET : 0) | EPOLLEXCLUSIVE;
+	ev.events = EPOLLIN | (et_listener ? EPOLLET : 0);
 	ev.data.ptr = &server_conn;
 	if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &ev) == -1) {
 		perror("epoll_ctl");
