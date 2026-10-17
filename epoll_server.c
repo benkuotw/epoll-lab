@@ -32,38 +32,6 @@ void close_conn(struct conn *c)
 	free(c);
 }
 
-// remember the client address once at accept time
-void add_client(int epoll_fd, int client_fd, struct sockaddr_in *client_addr)
-{
-	struct epoll_event ev;
-	struct conn *c;
-
-	int optval = 1;
-	if (setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval)) == -1) {
-		perror("setsockopt(TCP_NODELAY)");
-	}
-
-	c = malloc(sizeof(*c));
-	if (c == NULL) {
-		perror("malloc");
-		close(client_fd);
-		return;
-	}
-
-	c->fd = client_fd;
-	inet_ntop(AF_INET, &client_addr->sin_addr, c->ip, sizeof(c->ip));
-	c->port = ntohs(client_addr->sin_port);
-
-	// set EPOLLRDHUP for client closes connection or shuts down writing half
-	// set EPOLLET on client connection
-	ev.events = EPOLLIN | EPOLLRDHUP | EPOLLET;
-	ev.data.ptr = c;
-	if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev) == -1) {
-		perror("epoll_ctl: client_fd");
-		close_conn(c);
-	}
-}
-
 void handle_client(struct conn *c)
 {
 	char buf[BUF_SIZE];
@@ -95,6 +63,38 @@ void handle_client(struct conn *c)
 	}
 
 	close_conn(c);
+}
+
+// remember the client address once at accept time
+void add_client(int epoll_fd, int client_fd, struct sockaddr_in *client_addr)
+{
+	struct epoll_event ev;
+	struct conn *c;
+
+	int optval = 1;
+	if (setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval)) == -1) {
+		perror("setsockopt(TCP_NODELAY)");
+	}
+
+	c = malloc(sizeof(*c));
+	if (c == NULL) {
+		perror("malloc");
+		close(client_fd);
+		return;
+	}
+
+	c->fd = client_fd;
+	inet_ntop(AF_INET, &client_addr->sin_addr, c->ip, sizeof(c->ip));
+	c->port = ntohs(client_addr->sin_port);
+
+	// set EPOLLRDHUP for client closes connection or shuts down writing half
+	// set EPOLLET on client connection
+	ev.events = EPOLLIN | EPOLLRDHUP | EPOLLET;
+	ev.data.ptr = c;
+	if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev) == -1) {
+		perror("epoll_ctl: client_fd");
+		close_conn(c);
+	}
 }
 
 // accept until EAGAIN or EWOULDBLOCK since nonblocking listener, instead of one epoll_wait() per connection
