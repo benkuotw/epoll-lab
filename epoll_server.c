@@ -101,6 +101,8 @@ void accept_clients(int epoll_fd, int server_fd)
 	for (;;) {
 		client_fd = accept4(server_fd, (struct sockaddr *)&client_addr, &client_addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
 		if (client_fd == -1) {
+			if (errno == EINTR || errno == ECONNABORTED)
+				continue;
 			if (errno == EAGAIN || errno == EWOULDBLOCK) {
 				break; // backlog drained
 			} else {
