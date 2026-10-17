@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,6 +37,11 @@ void add_client(int epoll_fd, int client_fd, struct sockaddr_in *client_addr)
 {
 	struct epoll_event ev;
 	struct conn *c;
+
+	int optval = 1;
+	if (setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval)) == -1) {
+		perror("setsockopt(TCP_NODELAY)");
+	}
 
 	c = malloc(sizeof(*c));
 	if (c == NULL) {
