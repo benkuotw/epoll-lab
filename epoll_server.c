@@ -168,7 +168,7 @@ int main(int argc, char *argv[])
 	}
 
 	// nonblocking listener, man epoll.7
-	server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+	server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
 	if (server_fd == -1) {
 		perror("socket");
 		exit(EXIT_FAILURE);
