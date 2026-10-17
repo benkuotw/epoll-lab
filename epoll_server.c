@@ -95,10 +95,11 @@ void handle_client(struct conn *c)
 void accept_clients(int epoll_fd, int server_fd)
 {
 	struct sockaddr_in client_addr;
-	socklen_t client_addr_len = sizeof(client_addr);
+	socklen_t client_addr_len;
 	int client_fd;
 
 	for (;;) {
+		client_addr_len = sizeof(client_addr);
 		client_fd = accept4(server_fd, (struct sockaddr *)&client_addr, &client_addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
 		if (client_fd == -1) {
 			if (errno == EINTR || errno == ECONNABORTED)
@@ -129,7 +130,7 @@ int main(int argc, char *argv[])
 {
 	int server_fd, client_fd;
 	struct sockaddr_in server_addr, client_addr;
-	socklen_t client_addr_len = sizeof(client_addr);
+	socklen_t client_addr_len;
 	int port = PORT;
 	int epoll_fd, numReady;
 	struct epoll_event ev, evs[MAX_EVENTS];
@@ -241,6 +242,7 @@ int main(int argc, char *argv[])
 			if (c == &server_conn) {
 				if (accept_loop == 0) {
 					// one accept per wakeup, man epoll.7
+					client_addr_len = sizeof(client_addr);
 					client_fd = accept4(server_fd, (struct sockaddr *)&client_addr, &client_addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
 					if (client_fd == -1) {
 						perror("accept4");
