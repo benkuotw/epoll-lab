@@ -10,7 +10,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define PORT 10000   // default, override with -p
+#define PORT 10000 // default, override with -p
 #define BUF_SIZE 1024
 #define THREADS 1000 // default, override with -t
 
